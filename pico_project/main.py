@@ -7,6 +7,7 @@ import asyncio
 app = Microdot()
 
 
+
 class Queue:
     def __init__(self, max_size=-1):
         self.queue = []
@@ -90,7 +91,10 @@ def connect_wifi(ssid, password):
 
 
 async def main():
-    ip = connect_wifi('Network Name', 'Network Password')
+    with open("settings/Network_Settings", "r") as Network:
+        Network_Name,Network_Pass = Network.readline().split()
+
+    ip = connect_wifi(Network_Name, Network_Pass)
     port = 80 # http
     
     print(f'http://{ip}:{port}')
