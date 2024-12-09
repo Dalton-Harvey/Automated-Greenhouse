@@ -90,7 +90,7 @@ def connect_wifi(ssid, password):
 
 
 async def main():
-    ip = connect_wifi('NOKIA-31B1', 'MszQ3gT9tA')
+    ip = connect_wifi('Network Name', 'Network Password')
     port = 80 # http
     
     print(f'http://{ip}:{port}')
