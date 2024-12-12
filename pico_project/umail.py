@@ -13,7 +13,7 @@ AUTH_LOGIN = 'LOGIN'
 
 class SMTP:
     def cmd(self, cmd_str):
-        sock = self._sock;
+        sock = self._sock
         sock.write('%s\r\n' % cmd_str)
         resp = []
         next = True

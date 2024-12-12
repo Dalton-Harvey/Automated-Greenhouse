@@ -1,107 +1,85 @@
-from microdot import Microdot, send_file
-from microdot.websocket import with_websocket
-import network
-import random
+import rp2
+from machine import Pin
 import asyncio
+from src import soil_sensor
 
-app = Microdot()
+button_up_event = asyncio.Event()
+button_down_event = asyncio.Event()
+
+pump_pin = Pin(16, Pin.OUT)
+pump_pin.off()
+pump_lock = asyncio.Lock()
 
 
-
-class Queue:
-    def __init__(self, max_size=-1):
-        self.queue = []
-        self.lock = asyncio.Lock()
-        self.item_added = asyncio.Event()
-        self.max_size = max_size
+async def activate_pump(s):
+    """Run pump for {s} seconds"""
     
-    async def put(self, item):
-        async with self.lock:
-            self.queue.append(item)
-            
-            # pop oldest item if max size is exceeded
-            if self.max_size > 0 and len(self.queue) > self.max_size:
-                self.queue.pop(0)
-                
-            self.item_added.set()
+    async with pump_lock:
+        print(f'Pump activating for {s} seconds. Acquired lock')
+        pump_pin.on()
+        await asyncio.sleep(s)
+        pump_pin.off()
+        print(f'Pump off. Releasing lock')
+
+
+async def button_listener():
+    previous_state = rp2.bootsel_button()
     
-    async def get(self):
-        item = None
-        
-        await self.lock.acquire()
-        try:
-            while len(self.queue) == 0:
-                self.lock.release()
-                await self.item_added.wait()
-                await self.lock.acquire()
-            
-            item = self.queue.pop(0)
-            if len(self.queue) == 0:
-                self.item_added.clear()
-        finally:
-            self.lock.release()
-        
-        return item
-
-debug_queue = Queue()
-
-@app.route('/')
-async def index(request):
-    return send_file('index.html')
-
-
-@app.route('/debug')
-@with_websocket
-async def echo(request, ws):
     while True:
-        data = await debug_queue.get()
-        await ws.send(str(data))
-
-
-def buggy_code():
-    data = random.randint(0, 10)
-    if data % 2 == 0:
-        raise RuntimeError(f'Generated even number {data}')
-    return data
-
-
-async def run_buggy_code():
-    while True:
-        try:
-            data = buggy_code()
-            print(f'Successfully generated data: {data}')
-        except RuntimeError as e:
-            asyncio.create_task(debug_queue.put(e))
+        state = rp2.bootsel_button()
         
-        await asyncio.sleep(3)
+        # detect button press
+        if previous_state == 0 and state == 1:
+            button_down_event.set() # awaken all currently waiting tasks
+            button_down_event.clear() # immediately clear so future waiting tasks have to wait for the next button press
+        
+        # detect button release
+        if previous_state == 1 and state == 0:
+            button_up_event.set() # awaken all currently waiting tasks
+            button_up_event.clear() # immediately clear so future waiting tasks have to wait for the next button press
+        
+        previous_state = state
+        
+        # await a short time, people cant really manage to click for less than this so this should get all button presses
+        await asyncio.sleep(0.025)
 
 
-def connect_wifi(ssid, password):
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    wlan.connect(ssid, password)
+async def pump_on_button_up():
+    while True:
+        await button_up_event.wait()
+        print('Button pressed')
+        await activate_pump(5)
+
+
+async def collect_moisture_readings():
+    sliding_window_size = 3
+    sliding_window = []
+    sample_delay = 5
+    threshold = 350
     
-    import time
-    while not wlan.isconnected():
-        time.sleep(0.5)
+    sensor = soil_sensor.SoilSensor()
     
-    ip = wlan.ifconfig()[0]
-    
-    return ip
+    while True:
+        reading = sensor.moisture()
+        sliding_window.append(reading)
+        
+        while len(sliding_window) > sliding_window_size:
+            sliding_window.pop(0)
+        
+        print(f'Avg: {sum(sliding_window) / len(sliding_window):.0f} - Size: {len(sliding_window)}/{sliding_window_size} - Sliding Window: {sliding_window}')
+        
+        if len(sliding_window) == sliding_window_size and sum(sliding_window) / len(sliding_window) < threshold:
+            await activate_pump(5)
+            sliding_window = []
+        
+        await asyncio.sleep(sample_delay)
 
 
 async def main():
-    with open("settings/Network_Settings", "r") as Network:
-        Network_Name,Network_Pass = Network.readline().split()
-
-    ip = connect_wifi(Network_Name, Network_Pass)
-    port = 80 # http
-    
-    print(f'http://{ip}:{port}')
-    
     await asyncio.gather(
-        app.start_server(debug=True, host=ip, port=port),
-        run_buggy_code(),
+        button_listener(),
+        pump_on_button_up(),
+        collect_moisture_readings()
     )
 
 
