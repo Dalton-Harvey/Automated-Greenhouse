@@ -62,18 +62,15 @@ async def collect_moisture_readings():
     while True:
         reading = sensor.moisture()
         sliding_window.append(reading)
+
         
         while len(sliding_window) > sliding_window_size:
             sliding_window.pop(0)
         
         print(f'Avg: {sum(sliding_window) / len(sliding_window):.0f} - Size: {len(sliding_window)}/{sliding_window_size} - Sliding Window: {sliding_window}')
         
-        if len(sliding_window) == sliding_window_size and sum(sliding_window) / len(sliding_window) < threshold:
-            await activate_pump(5)
-            sliding_window = []
-        
-        await asyncio.sleep(sample_delay)
-
+        if len(sliding_window) == sliding_window_size:
+            return sum(sliding_window) / len(sliding_window)    
 
 async def main():
     await asyncio.gather(
@@ -81,6 +78,5 @@ async def main():
         pump_on_button_up(),
         collect_moisture_readings()
     )
-
 
 asyncio.run(main())
